@@ -25,7 +25,7 @@ st.markdown("---")
 # --- Step 1: Problem Selection ---
 problem_type = st.sidebar.selectbox("Select Problem Type", ["Classification", "Regression"])
 
-# Horizontal Expansion using Tabs (Satisfies Step-2 Prompt)
+# Horizontal Expansion using Tabs
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "1. Data Input", "2. EDA", "3. Cleaning", "4. Feature Selection", 
     "5. Split", "6. Model Selection & Tuning", "7. Training", "8. Metrics"
@@ -44,14 +44,6 @@ with tab1:
     
     if uploaded_file is not None:
         df = pd.read_csv(uploaded_file)
-        
-        # --- Advanced Data Pre-processing (Unit 1 & 2 Fix) ---
-        # This converts "5000 mAh Battery" to 5000.0 (Numerical)
-        if 'battery' in df.columns:
-            if df['battery'].dtype == 'object':
-                df['battery'] = pd.to_numeric(df['battery'].str.extract('(\d+)', expand=False), errors='coerce')
-                st.success("✅ 'battery' column converted to numerical values for mathematical modeling.")
-
         st.session_state.df = df
         st.write("Data Preview:", df.head())
         
@@ -62,19 +54,16 @@ with tab1:
         
         if len(features) >= 2:
             st.subheader("PCA Visualization (2D)")
-            # Unsupervised Learning demonstration (Unit 2)
+            # Basic imputation for PCA
             temp_df = df[features].dropna()
-            temp_df = pd.get_dummies(temp_df) 
+            temp_df = pd.get_dummies(temp_df) # Handle categorical for PCA
             
-            if not temp_df.empty:
-                pca = PCA(n_components=2)
-                components = pca.fit_transform(temp_df)
-                
-                pca_df = pd.DataFrame(data=components, columns=['PC1', 'PC2'])
-                fig = px.scatter(pca_df, x='PC1', y='PC2', title="Overall Data Shape (PCA)")
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.warning("Not enough clean data for PCA. Please handle missing values in Tab 3.")
+            pca = PCA(n_components=2)
+            components = pca.fit_transform(temp_df)
+            
+            pca_df = pd.DataFrame(data=components, columns=['PC1', 'PC2'])
+            fig = px.scatter(pca_df, x='PC1', y='PC2', title="Overall Data Shape (PCA)")
+            st.plotly_chart(fig, use_container_width=True)
 
 # --- Tab 2: EDA ---
 with tab2:
@@ -84,7 +73,7 @@ with tab2:
         st.write("Dataset Description:")
         st.write(df.describe())
         
-        st.write("Missing Values Count:")
+        st.write("Missing Values:")
         st.write(df.isnull().sum())
         
         # Correlation Heatmap (Numerical only)
@@ -97,14 +86,14 @@ with tab2:
     else:
         st.info("Please upload data in Tab 1.")
 
-# --- Tab 3: Data Engineering & Cleaning (Unit 1 & 2) ---
+# --- Tab 3: Data Engineering & Cleaning ---
 with tab3:
     st.header("Data Engineering & Outlier Removal")
     if st.session_state.df is not None:
         df = st.session_state.df.copy()
         
         # Missing Value Handling
-        st.subheader("Handle Missing Values (Imputation)")
+        st.subheader("Handle Missing Values")
         num_cols = df.select_dtypes(include=[np.number]).columns
         impute_strategy = st.selectbox("Imputation Method for numericals", ["mean", "median", "most_frequent"])
         
@@ -114,61 +103,59 @@ with tab3:
             st.session_state.df = df
             st.success(f"Missing values imputed using {impute_strategy}.")
 
-        # Outlier Detection (Unit 2)
-        st.subheader("Outlier Detection & Removal")
+        # Outlier Detection
+        st.subheader("Outlier Detection")
         outlier_method = st.selectbox("Select Method", ["None", "IQR", "Isolation Forest", "DBSCAN", "OPTICS"])
         
         if outlier_method != "None":
             if st.button("Detect Outliers"):
                 outliers = np.zeros(len(df), dtype=bool)
-                # Ensure numerical only for detection
-                temp_df_num = df[num_cols].dropna()
+                temp_df = df[num_cols].dropna()
                 
                 if outlier_method == "Isolation Forest":
                     clf = IsolationForest(random_state=42)
-                    preds = clf.fit_predict(temp_df_num)
-                    outliers[temp_df_num.index] = (preds == -1)
-                elif outlier_method == "IQR":
-                    Q1 = temp_df_num.quantile(0.25)
-                    Q3 = temp_df_num.quantile(0.75)
-                    IQR = Q3 - Q1
-                    outliers[temp_df_num.index] = ((temp_df_num < (Q1 - 1.5 * IQR)) | (temp_df_num > (Q3 + 1.5 * IQR))).any(axis=1)
+                    preds = clf.fit_predict(temp_df)
+                    outliers[temp_df.index] = preds == -1
                 
+                # Show outlier count
                 st.warning(f"Detected {outliers.sum()} outliers.")
                 
                 if outliers.sum() > 0:
-                    if st.button("Confirm: Delete Outliers from Dataset"):
+                    remove = st.radio("Do you want to remove these outliers?", ["No", "Yes"])
+                    if remove == "Yes":
                         st.session_state.df = df[~outliers]
                         st.success("Outliers removed successfully!")
     else:
         st.info("Please upload data in Tab 1.")
 
-# --- Tab 4: Feature Selection (Unit 2) ---
+# --- Tab 4: Feature Selection ---
 with tab4:
     st.header("Feature Selection")
     if st.session_state.df is not None and st.session_state.target is not None:
         df = st.session_state.df
         target = st.session_state.target
         
-        fs_method = st.selectbox("Select Selection Method", ["Variance Threshold", "Information Gain"])
+        fs_method = st.selectbox("Select Method", ["Variance Threshold", "Correlation", "Information Gain"])
         
         if st.button("Run Feature Selection"):
             num_cols = df.select_dtypes(include=[np.number]).columns
-            X = df[num_cols].drop(columns=[target], errors='ignore').fillna(0)
+            X = df[num_cols].drop(columns=[target], errors='ignore')
             y = df[target] if target in num_cols else LabelEncoder().fit_transform(df[target].astype(str))
             
             if fs_method == "Variance Threshold":
                 selector = VarianceThreshold(threshold=0.1)
-                selector.fit(X)
-                selected = X.columns[selector.get_support()]
-                st.write("Selected Features based on Variance:", selected.tolist())
+                try:
+                    selector.fit(X)
+                    selected = X.columns[selector.get_support()]
+                    st.write("Selected Features based on Variance:", selected.tolist())
+                except Exception as e:
+                    st.error("Error calculating variance.")
                     
             elif fs_method == "Information Gain":
                 score_func = mutual_info_classif if problem_type == "Classification" else mutual_info_regression
                 selector = SelectKBest(score_func=score_func, k='all')
-                selector.fit(X, y)
+                selector.fit(X.fillna(0), y)
                 scores = pd.DataFrame({'Feature': X.columns, 'Score': selector.scores_}).sort_values(by='Score', ascending=False)
-                st.write("Feature Importance Scores:")
                 st.write(scores)
     else:
         st.info("Please upload data and select a target.")
@@ -180,16 +167,16 @@ with tab5:
         test_size = st.slider("Select Test Size %", 10, 50, 20) / 100.0
         
         if st.button("Split Data"):
-            # Ensure model-ready format
-            df_cleaned = st.session_state.df.dropna()
-            df_encoded = pd.get_dummies(df_cleaned, drop_first=True) 
+            df = st.session_state.df.dropna()
+            # Basic preprocessing to ensure model runs
+            df = pd.get_dummies(df, drop_first=True) 
             target = st.session_state.target
             
-            # Match target in encoded dataframe
-            actual_target = [col for col in df_encoded.columns if target in col][0]
+            # Re-find target in case get_dummies changed its name (not likely for numerical target, but safe)
+            actual_target = [col for col in df.columns if target in col][0]
             
-            X = df_encoded.drop(columns=[actual_target])
-            y = df_encoded[actual_target]
+            X = df.drop(columns=[actual_target])
+            y = df[actual_target]
             
             if problem_type == "Classification":
                 y = LabelEncoder().fit_transform(y)
@@ -197,93 +184,120 @@ with tab5:
             X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=42)
             
             st.session_state.split_data = (X_train, X_test, y_train, y_test)
-            st.success(f"Split Complete: {len(X_train)} train samples, {len(X_test)} test samples.")
+            st.success(f"Data Split: {len(X_train)} training samples, {len(X_test)} testing samples.")
     else:
-        st.info("Please upload data in Tab 1.")
+        st.info("Please complete previous steps.")
 
 # --- Tab 6: Model Selection & Tuning ---
 with tab6:
-    st.header("Select Model & Hyperparameter Tuning Strategy")
+    st.header("Select Model & Hyperparameter Tuning")
     model_choice = st.selectbox("Select Model", ["Linear/Logistic Regression", "SVM", "Random Forest", "KMeans (Clustering)"])
-    tune_mode = st.radio("AutoML Tuning Mode", ["None", "GridSearch", "RandomSearch"])
+    
+    tune_mode = st.radio("Hyperparameter Tuning Strategy", ["None", "GridSearch", "RandomSearch"])
     
     st.session_state.model_choice = model_choice
     st.session_state.tune_mode = tune_mode
     
     if model_choice == "SVM":
-        st.session_state.svm_kernel = st.selectbox("Select SVM Kernel", ["linear", "rbf", "poly"])
+        st.session_state.svm_kernel = st.selectbox("Select Kernel", ["linear", "poly", "rbf", "sigmoid"])
 
-# --- Tab 7: Training & Validation (Unit 1 & 3) ---
+# --- Tab 7: Training & Validation ---
 with tab7:
     st.header("Model Training & K-Fold Validation")
-    k_folds = st.number_input("Value for K (Cross-Validation)", min_value=2, max_value=10, value=5)
+    k_folds = st.number_input("Enter value for K (K-Fold Validation)", min_value=2, max_value=20, value=5)
     
-    if st.button("Train Model Now"):
+    if st.button("Train Model"):
         if 'split_data' in st.session_state:
             X_train, X_test, y_train, y_test = st.session_state.split_data
             model_choice = st.session_state.model_choice
             
-            # Instantiate
+            # Instantiate model
             if problem_type == "Classification":
-                if model_choice == "Linear/Logistic Regression": model = LogisticRegression(max_iter=1000)
+                if model_choice == "Linear/Logistic Regression": model = LogisticRegression()
                 elif model_choice == "SVM": model = SVC(kernel=st.session_state.get('svm_kernel', 'rbf'))
                 elif model_choice == "Random Forest": model = RandomForestClassifier()
-                elif model_choice == "KMeans (Clustering)": model = KMeans(n_clusters=len(np.unique(y_train)))
+                elif model_choice == "KMeans (Clustering)": model = KMeans(n_clusters=len(np.unique(y_train))) # Unsupervised mapped
             else:
                 if model_choice == "Linear/Logistic Regression": model = LinearRegression()
                 elif model_choice == "SVM": model = SVR(kernel=st.session_state.get('svm_kernel', 'rbf'))
                 elif model_choice == "Random Forest": model = RandomForestRegressor()
-                elif model_choice == "KMeans (Clustering)": st.error("KMeans not for regression"); model = None
+                elif model_choice == "KMeans (Clustering)": st.error("KMeans is not for regression"); model = None
             
-            if model:
+            if model is not None:
+                # K-Fold Validation
                 kf = KFold(n_splits=k_folds, shuffle=True, random_state=42)
                 scoring = 'accuracy' if problem_type == "Classification" else 'neg_mean_squared_error'
                 
-                with st.spinner("Validating..."):
+                with st.spinner("Running K-Fold Validation..."):
                     cv_results = cross_val_score(model, X_train, y_train, cv=kf, scoring=scoring)
-                st.write(f"K-Fold Scores ({scoring}):", cv_results)
+                
+                st.write(f"K-Fold Results ({scoring}):", cv_results)
                 st.write(f"Mean Score: **{np.mean(cv_results):.4f}**")
                 
-                # Hyperparameter Tuning (Unit 3)
+                # Hyperparameter Tuning Handling
                 if st.session_state.tune_mode != "None" and model_choice == "Random Forest":
-                    param_grid = {'n_estimators': [50, 100], 'max_depth': [None, 10]}
-                    st.info(f"Running {st.session_state.tune_mode}...")
-                    search = GridSearchCV(model, param_grid, cv=3) if st.session_state.tune_mode == "GridSearch" else RandomizedSearchCV(model, param_grid, cv=3)
+                    param_grid = {'n_estimators': [50, 100], 'max_depth': [None, 10, 20]}
+                    st.info("Applying tuning for Random Forest...")
+                    if st.session_state.tune_mode == "GridSearch":
+                        search = GridSearchCV(model, param_grid, cv=3)
+                    else:
+                        search = RandomizedSearchCV(model, param_grid, cv=3)
+                    
                     search.fit(X_train, y_train)
                     model = search.best_estimator_
-                    st.write("Best Hyperparameters:", search.best_params_)
+                    st.write("Best Parameters:", search.best_params_)
                 else:
                     model.fit(X_train, y_train)
                 
                 st.session_state.trained_model = model
-                st.success("Training Successful!")
+                st.success("Model trained successfully! Move to Metrics tab.")
         else:
-            st.error("Split your data in Tab 5 first.")
+            st.error("Please split data in Tab 5 first.")
 
-# --- Tab 8: Metrics (Unit 1 Evaluation) ---
+# --- Tab 8: Metrics ---
 with tab8:
-    st.header("Performance Metrics & Error Analysis")
+    st.header("Performance Metrics (Overfitting Check)")
     if 'trained_model' in st.session_state and 'split_data' in st.session_state:
         model = st.session_state.trained_model
         X_train, X_test, y_train, y_test = st.session_state.split_data
         
+        # Predictions
         train_preds = model.predict(X_train)
         test_preds = model.predict(X_test)
         
-        c1, c2 = st.columns(2)
+        col1, col2 = st.columns(2)
+        
         if problem_type == "Classification":
             train_acc = accuracy_score(y_train, train_preds)
             test_acc = accuracy_score(y_test, test_preds)
-            c1.metric("Train Accuracy", f"{train_acc:.4f}")
-            c2.metric("Test Accuracy", f"{test_acc:.4f}")
-            st.text("Classification Report:")
+            
+            col1.metric("Training Accuracy", f"{train_acc:.4f}")
+            col2.metric("Testing Accuracy", f"{test_acc:.4f}")
+            
+            st.text("Classification Report (Test Data):")
             st.text(classification_report(y_test, test_preds))
-            if train_acc - test_acc > 0.15: st.warning("⚠️ High variance detected: Model is OVERFITTING.")
-        else:
+            
+            if train_acc - test_acc > 0.15:
+                st.warning("⚠️ High difference between Train and Test accuracy. The model might be OVERFITTING.")
+            elif train_acc < 0.60 and test_acc < 0.60:
+                st.error("⚠️ Low accuracy on both sets. The model might be UNDERFITTING.")
+            else:
+                st.success("✅ Model appears to generalize well.")
+                
+        else: # Regression
             train_r2 = r2_score(y_train, train_preds)
             test_r2 = r2_score(y_test, test_preds)
-            c1.metric("Train R2", f"{train_r2:.4f}")
-            c2.metric("Test R2", f"{test_r2:.4f}")
-            if train_r2 - test_r2 > 0.15: st.warning("⚠️ Model is OVERFITTING.")
+            
+            col1.metric("Training R-Squared", f"{train_r2:.4f}")
+            col2.metric("Testing R-Squared", f"{test_r2:.4f}")
+            
+            st.write(f"Test MSE: {mean_squared_error(y_test, test_preds):.4f}")
+            
+            if train_r2 - test_r2 > 0.15:
+                st.warning("⚠️ High difference between Train and Test R2 score. The model might be OVERFITTING.")
+            elif train_r2 < 0.50 and test_r2 < 0.50:
+                st.error("⚠️ Low R2 scores on both sets. The model might be UNDERFITTING.")
+            else:
+                st.success("✅ Model appears to generalize well.")
     else:
-        st.info("Train a model in Tab 7 to see metrics.")
+        st.info("Train a model first in Tab 7.")
